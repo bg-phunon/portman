@@ -111,6 +111,8 @@ pub struct App {
     pub last_refresh: Instant,
     pub page_size: usize,
     scanner: ProcessScanner,
+    // Cached filtered+sorted view — rebuilt once per frame via rebuild_cache()
+    filtered_cache: Vec<ProcessInfo>,
 }
 
 impl App {
@@ -128,31 +130,16 @@ impl App {
             last_refresh: Instant::now(),
             page_size: 20,
             scanner,
+            filtered_cache: Vec::new(),
         }
     }
 
-    // ----- Data -----
+    // ----- Cache (HIGH fix: compute filter+sort once per frame) -----
 
-    pub fn refresh(&mut self) {
-        match self.scanner.scan() {
-            Ok(procs) => {
-                self.processes = procs;
-                self.last_error = None;
-                // Prune stale marks
-                let valid: BTreeSet<MarkKey> = self.processes.iter().map(mark_key).collect();
-                self.marked.retain(|k| valid.contains(k));
-                self.clamp_selection();
-            }
-            Err(e) => {
-                self.last_error = Some(e.to_string());
-            }
-        }
-        self.last_refresh = Instant::now();
-    }
-
-    pub fn filtered_processes(&self) -> Vec<&ProcessInfo> {
-        let mut result: Vec<&ProcessInfo> = if self.filter.is_empty() {
-            self.processes.iter().collect()
+    /// Rebuild the filtered+sorted cache. Call once before each render.
+    pub fn rebuild_cache(&mut self) {
+        let mut result: Vec<ProcessInfo> = if self.filter.is_empty() {
+            self.processes.clone()
         } else {
             let q = self.filter.to_lowercase();
             self.processes
@@ -165,6 +152,7 @@ impl App {
                         || p.local_addr.contains(&q)
                         || p.proto.to_lowercase().contains(&q)
                 })
+                .cloned()
                 .collect()
         };
 
@@ -188,12 +176,39 @@ impl App {
             }
         });
 
-        result
+        self.filtered_cache = result;
+    }
+
+    /// Read-only access to cached filtered+sorted processes.
+    pub fn filtered(&self) -> &[ProcessInfo] {
+        &self.filtered_cache
+    }
+
+    pub fn filtered_len(&self) -> usize {
+        self.filtered_cache.len()
+    }
+
+    // ----- Data -----
+
+    pub fn refresh(&mut self) {
+        match self.scanner.scan() {
+            Ok(procs) => {
+                self.processes = procs;
+                self.last_error = None;
+                let valid: BTreeSet<MarkKey> = self.processes.iter().map(mark_key).collect();
+                self.marked.retain(|k| valid.contains(k));
+            }
+            Err(e) => {
+                self.last_error = Some(e.to_string());
+            }
+        }
+        self.last_refresh = Instant::now();
+        self.rebuild_cache();
+        self.clamp_selection();
     }
 
     pub fn selected_process(&self) -> Option<&ProcessInfo> {
-        let filtered = self.filtered_processes();
-        filtered.get(self.selected).copied()
+        self.filtered_cache.get(self.selected)
     }
 
     // ----- Mark / multi-select -----
@@ -202,9 +217,8 @@ impl App {
         self.marked.contains(&mark_key(p))
     }
 
-    /// Toggle mark on current selection and advance cursor.
     pub fn toggle_mark(&mut self) {
-        if let Some(info) = self.selected_process().cloned() {
+        if let Some(info) = self.filtered_cache.get(self.selected).cloned() {
             let key = mark_key(&info);
             if !self.marked.remove(&key) {
                 self.marked.insert(key);
@@ -213,28 +227,23 @@ impl App {
         self.move_down();
     }
 
-    /// Mark all currently visible (filtered) rows.
     pub fn mark_all_visible(&mut self) {
-        let keys: Vec<MarkKey> = self.filtered_processes().iter().map(|p| mark_key(p)).collect();
+        let keys: Vec<MarkKey> = self.filtered_cache.iter().map(mark_key).collect();
         self.marked.extend(keys);
     }
 
-    /// Unmark everything.
     pub fn unmark_all(&mut self) {
         self.marked.clear();
     }
 
     // ----- Kill -----
 
-    /// Enter kill-confirm state. If marks exist → multi, else → single.
     pub fn request_kill(&mut self) {
         if self.marked.is_empty() {
-            // Single kill
             if let Some(info) = self.selected_process().cloned() {
                 self.state = AppState::Confirm(info);
             }
         } else {
-            // Multi kill — collect marked ProcessInfo
             let targets: Vec<ProcessInfo> = self
                 .processes
                 .iter()
@@ -247,7 +256,6 @@ impl App {
         }
     }
 
-    /// Kill single process (from Confirm state).
     pub fn kill_confirmed_single(&mut self) -> Result<()> {
         if let AppState::Confirm(ref info) = self.state {
             let pid = info.pid;
@@ -256,6 +264,7 @@ impl App {
             if result.is_ok() {
                 self.processes.retain(|p| p.pid != pid);
                 self.marked.retain(|&(p, _)| p != pid);
+                self.rebuild_cache();
                 self.clamp_selection();
                 self.set_message("Process killed".to_string());
             }
@@ -265,10 +274,8 @@ impl App {
         }
     }
 
-    /// Kill all marked processes (from ConfirmMulti state).
     pub fn kill_confirmed_multi(&mut self) -> Result<()> {
         if let AppState::ConfirmMulti(ref targets) = self.state {
-            // Collect unique PIDs
             let mut pids: Vec<u32> = targets.iter().map(|p| p.pid).collect();
             pids.sort();
             pids.dedup();
@@ -286,6 +293,7 @@ impl App {
             self.state = AppState::Normal;
             self.processes.retain(|p| !pids.contains(&p.pid));
             self.marked.clear();
+            self.rebuild_cache();
             self.clamp_selection();
 
             if errors.is_empty() {
@@ -310,7 +318,7 @@ impl App {
     }
 
     pub fn move_down(&mut self) {
-        let len = self.filtered_processes().len();
+        let len = self.filtered_len();
         if len > 0 && self.selected < len - 1 {
             self.selected += 1;
         }
@@ -321,7 +329,7 @@ impl App {
     }
 
     pub fn go_bottom(&mut self) {
-        let len = self.filtered_processes().len();
+        let len = self.filtered_len();
         self.selected = if len > 0 { len - 1 } else { 0 };
     }
 
@@ -330,14 +338,14 @@ impl App {
     }
 
     pub fn page_down(&mut self) {
-        let len = self.filtered_processes().len();
+        let len = self.filtered_len();
         if len == 0 {
             return;
         }
         self.selected = (self.selected + self.page_size).min(len - 1);
     }
 
-    // ----- Sort -----
+    // ----- Sort (rebuild cache on change) -----
 
     pub fn cycle_sort(&mut self) {
         let idx = self.sort_col.index();
@@ -345,6 +353,7 @@ impl App {
         self.sort_col = SortColumn::ALL[next];
         self.sort_dir = SortDir::Asc;
         self.selected = 0;
+        self.rebuild_cache();
     }
 
     pub fn set_sort(&mut self, col: SortColumn) {
@@ -355,11 +364,33 @@ impl App {
             self.sort_dir = SortDir::Asc;
         }
         self.selected = 0;
+        self.rebuild_cache();
     }
 
     pub fn toggle_sort_dir(&mut self) {
         self.sort_dir = self.sort_dir.toggle();
         self.selected = 0;
+        self.rebuild_cache();
+    }
+
+    // ----- Filter (rebuild cache on change) -----
+
+    pub fn set_filter_char(&mut self, c: char) {
+        self.filter.push(c);
+        self.selected = 0;
+        self.rebuild_cache();
+    }
+
+    pub fn backspace_filter(&mut self) {
+        self.filter.pop();
+        self.selected = 0;
+        self.rebuild_cache();
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter.clear();
+        self.selected = 0;
+        self.rebuild_cache();
     }
 
     // ----- Clipboard -----
@@ -369,6 +400,8 @@ impl App {
             let text = info.port.to_string();
             if clipboard_copy(&text) {
                 self.set_message(format!("Copied port: {text}"));
+            } else {
+                self.set_message("Clipboard failed (pbcopy not found?)".to_string());
             }
         }
     }
@@ -382,7 +415,6 @@ impl App {
                 }
             }
         } else {
-            // Multi: collect unique PIDs
             let mut pids: Vec<u32> = self
                 .processes
                 .iter()
@@ -416,7 +448,7 @@ impl App {
     }
 
     fn clamp_selection(&mut self) {
-        let len = self.filtered_processes().len();
+        let len = self.filtered_len();
         if len == 0 {
             self.selected = 0;
         } else if self.selected >= len {

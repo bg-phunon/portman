@@ -132,6 +132,9 @@ fn run_json(scanner: &mut ProcessScanner, filter: Option<&str>) -> Result<()> {
 
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
+        // Rebuild cache once per frame (not per-widget)
+        app.rebuild_cache();
+
         terminal.draw(|frame| {
             let table_h = frame.area().height.saturating_sub(5) as usize;
             app.page_size = table_h.max(1);
@@ -170,21 +173,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         // ----- Filter input -----
         AppState::FilterInput => match key.code {
             KeyCode::Esc => {
-                app.filter.clear();
+                app.clear_filter();
                 app.state = AppState::Normal;
-                app.selected = 0;
             }
             KeyCode::Enter => {
                 app.state = AppState::Normal;
             }
-            KeyCode::Backspace => {
-                app.filter.pop();
-                app.selected = 0;
-            }
-            KeyCode::Char(c) => {
-                app.filter.push(c);
-                app.selected = 0;
-            }
+            KeyCode::Backspace => app.backspace_filter(),
+            KeyCode::Char(c) => app.set_filter_char(c),
             _ => {}
         },
 
@@ -230,8 +226,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             }
             KeyCode::Esc => {
                 if !app.filter.is_empty() {
-                    app.filter.clear();
-                    app.selected = 0;
+                    app.clear_filter();
                 }
             }
 

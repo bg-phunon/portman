@@ -10,7 +10,7 @@ use crate::process::ProcessInfo;
 const COLUMNS: [SortColumn; 8] = SortColumn::ALL;
 
 pub fn render_table(frame: &mut Frame, app: &App, area: Rect) {
-    let filtered = app.filtered_processes();
+    let filtered = app.filtered();
 
     // Build header — first column is the mark indicator "●"
     let mut header_cells: Vec<Span> = vec![Span::styled(

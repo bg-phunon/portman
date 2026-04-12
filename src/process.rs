@@ -190,8 +190,10 @@ struct LsofEntry {
 }
 
 fn run_lsof() -> Result<Vec<LsofEntry>> {
+    // Use -F field mode for robust parsing (handles spaces in command names)
+    // Field selectors: p=PID, c=command, L=login name, t=type, n=name
     let output = Command::new("lsof")
-        .args(["-iTCP", "-sTCP:LISTEN", "-n", "-P"])
+        .args(["-nP", "-iTCP", "-sTCP:LISTEN", "-FpcLtn"])
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -208,62 +210,75 @@ fn run_lsof() -> Result<Vec<LsofEntry>> {
         if stderr.contains("Permission denied") {
             anyhow::bail!(ScanError::PermissionDenied);
         }
-        // lsof returns exit 1 when no results — that's okay
         if output.status.code() == Some(1) && output.stdout.is_empty() {
             return Ok(Vec::new());
         }
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_lsof_output(&stdout)
+    parse_lsof_field_output(&stdout)
 }
 
-fn parse_lsof_output(output: &str) -> Result<Vec<LsofEntry>> {
+/// Parse lsof -F field mode output.
+///
+/// Each line starts with a field identifier character:
+///   p = PID, c = command, L = login name, t = type (IPv4/IPv6), n = name
+///
+/// Process context (p, c, L) repeats per process; fd context (t, n) repeats per socket.
+fn parse_lsof_field_output(output: &str) -> Result<Vec<LsofEntry>> {
     let mut entries = Vec::new();
 
-    for line in output.lines().skip(1) {
-        // skip header
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        // lsof output: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME (LISTEN)
-        if fields.len() < 9 {
+    // Current process context
+    let mut cur_pid: u32 = 0;
+    let mut cur_cmd = String::new();
+    let mut cur_user = String::new();
+
+    // Current fd context
+    let mut cur_type = String::new();
+
+    for line in output.lines() {
+        if line.is_empty() {
             continue;
         }
 
-        let command = fields[0].to_string();
-        let pid: u32 = match fields[1].parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let user = fields[2].to_string();
+        let tag = line.as_bytes()[0];
+        let value = &line[1..];
 
-        // TYPE field (index 4): "IPv4" or "IPv6"
-        let proto = fields[4].to_string();
-
-        // NAME field: find the field containing ':' that isn't "(LISTEN)"
-        // e.g. "127.0.0.1:3000", "*:8080", "[::1]:443"
-        let name = fields
-            .iter()
-            .rev()
-            .find(|f| f.contains(':') && !f.starts_with('('))
-            .copied()
-            .unwrap_or("");
-
-        let (local_addr, port) = split_name(name);
-
-        if let Some(port) = port {
-            entries.push(LsofEntry {
-                pid,
-                port,
-                proto,
-                local_addr,
-                user,
-                command,
-            });
+        match tag {
+            b'p' => {
+                cur_pid = value.parse().unwrap_or(0);
+                // Reset per-process fields
+                cur_cmd.clear();
+                cur_user.clear();
+            }
+            b'c' => cur_cmd = value.to_string(),
+            b'L' => cur_user = value.to_string(),
+            b't' => cur_type = value.to_string(),
+            b'n' => {
+                // name field: "127.0.0.1:3000", "*:8080", "[::1]:443"
+                let (local_addr, port) = split_name(value);
+                if let Some(port) = port {
+                    entries.push(LsofEntry {
+                        pid: cur_pid,
+                        port,
+                        proto: cur_type.clone(),
+                        local_addr,
+                        user: cur_user.clone(),
+                        command: cur_cmd.clone(),
+                    });
+                }
+            }
+            _ => {} // f (fd), etc. — ignored
         }
     }
 
     // Deduplicate by (pid, port, proto)
-    entries.sort_by(|a, b| a.pid.cmp(&b.pid).then(a.port.cmp(&b.port)).then(a.proto.cmp(&b.proto)));
+    entries.sort_by(|a, b| {
+        a.pid
+            .cmp(&b.pid)
+            .then(a.port.cmp(&b.port))
+            .then(a.proto.cmp(&b.proto))
+    });
     entries.dedup_by(|a, b| a.pid == b.pid && a.port == b.port && a.proto == b.proto);
 
     Ok(entries)
