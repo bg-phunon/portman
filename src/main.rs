@@ -109,14 +109,7 @@ fn run_json(scanner: &mut ProcessScanner, filter: Option<&str>) -> Result<()> {
     let procs = scanner.scan()?;
     let filtered: Vec<_> = if let Some(q) = filter {
         let q = q.to_lowercase();
-        procs
-            .into_iter()
-            .filter(|p| {
-                p.port.to_string().contains(&q)
-                    || p.app.to_lowercase().contains(&q)
-                    || p.local_addr.contains(&q)
-            })
-            .collect()
+        procs.into_iter().filter(|p| p.matches_filter_lower(&q)).collect()
     } else {
         procs
     };
@@ -136,6 +129,7 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         app.rebuild_cache();
 
         terminal.draw(|frame| {
+            app.set_layout_mode(ui::LayoutMode::from_width(frame.area().width));
             let table_h = frame.area().height.saturating_sub(5) as usize;
             app.page_size = table_h.max(1);
             ui::render(frame, app);
@@ -165,6 +159,14 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         // ----- Help -----
         AppState::Help => match key.code {
             KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
+                app.state = AppState::Normal;
+            }
+            _ => {}
+        },
+
+        // ----- Inspect -----
+        AppState::Inspect(_) => match key.code {
+            KeyCode::Char('i') | KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
                 app.state = AppState::Normal;
             }
             _ => {}
@@ -216,6 +218,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
             // Misc
             KeyCode::Char('r') => app.refresh(),
+            KeyCode::Char('i') | KeyCode::Enter => app.request_inspect(),
             KeyCode::Char('?') => {
                 app.state = AppState::Help;
             }
@@ -274,4 +277,189 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         },
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::process::{
+        ListenScope, ProcessInfo, RecommendedAction, RiskLevel, WorkspaceRelation,
+    };
+
+    fn sample_process(pid: u32, port: u16, app_name: &str) -> ProcessInfo {
+        ProcessInfo {
+            port,
+            pid,
+            proto: "IPv4".to_string(),
+            local_addr: "127.0.0.1".to_string(),
+            app: app_name.to_string(),
+            command: format!("/tmp/{app_name}"),
+            cpu: 0.0,
+            memory_mb: 10.0,
+            status: "Run".to_string(),
+            username: "tester".to_string(),
+            start_time: 1,
+            listen_scope: ListenScope::Localhost,
+            risk_level: RiskLevel::Low,
+            inferred_kind: "Go service".to_string(),
+            project_type: "Go".to_string(),
+            project_root: "/tmp/project".to_string(),
+            exe_path: format!("/tmp/{app_name}"),
+            cwd: "/tmp/project".to_string(),
+            parent_pid: Some(1),
+            parent_command: "launchd".to_string(),
+            guidance: "safe".to_string(),
+            recommended_action: RecommendedAction::Keep,
+            workspace_relation: WorkspaceRelation::CurrentWorkspace,
+            origin_summary: "Go workspace: /tmp/project".to_string(),
+        }
+    }
+
+    fn app_with_processes() -> App {
+        let mut app = App::new(ProcessScanner::new());
+        app.processes = vec![
+            sample_process(1001, 3000, "alpha"),
+            sample_process(1002, 3001, "beta"),
+            sample_process(1003, 3002, "gamma"),
+        ];
+        app.rebuild_cache();
+        app
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl_c() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn navigation_and_mark_keys_work_in_normal_mode() {
+        let mut app = app_with_processes();
+
+        assert!(!handle_key(&mut app, key(KeyCode::Down)));
+        assert_eq!(app.selected, 1);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char(' '))));
+        assert_eq!(app.marked.len(), 1);
+        assert_eq!(app.selected, 2);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('g'))));
+        assert_eq!(app.selected, 0);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('G'))));
+        assert_eq!(app.selected, 2);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('m'))));
+        assert_eq!(app.marked.len(), 3);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('M'))));
+        assert!(app.marked.is_empty());
+    }
+
+    #[test]
+    fn filter_keys_edit_and_clear_filter() {
+        let mut app = app_with_processes();
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('/'))));
+        assert!(matches!(app.state, AppState::FilterInput));
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('b'))));
+        assert!(!handle_key(&mut app, key(KeyCode::Char('e'))));
+        assert_eq!(app.filter, "be");
+
+        assert!(!handle_key(&mut app, key(KeyCode::Backspace)));
+        assert_eq!(app.filter, "b");
+
+        assert!(!handle_key(&mut app, key(KeyCode::Enter)));
+        assert!(matches!(app.state, AppState::Normal));
+        assert_eq!(app.filter, "b");
+
+        assert!(!handle_key(&mut app, key(KeyCode::Esc)));
+        assert!(app.filter.is_empty());
+    }
+
+    #[test]
+    fn inspect_and_help_keys_open_and_close_views() {
+        let mut app = app_with_processes();
+
+        assert!(!handle_key(&mut app, key(KeyCode::Enter)));
+        assert!(matches!(app.state, AppState::Inspect(_)));
+
+        assert!(!handle_key(&mut app, key(KeyCode::Esc)));
+        assert!(matches!(app.state, AppState::Normal));
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('?'))));
+        assert!(matches!(app.state, AppState::Help));
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('?'))));
+        assert!(matches!(app.state, AppState::Normal));
+    }
+
+    #[test]
+    fn sort_and_quit_keys_work() {
+        let mut app = app_with_processes();
+
+        assert_eq!(app.sort_col, SortColumn::Port);
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::App);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('1'))));
+        assert_eq!(app.sort_col, SortColumn::Proto);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('S'))));
+        assert_eq!(app.sort_dir, app::SortDir::Desc);
+
+        assert!(handle_key(&mut app, key(KeyCode::Char('q'))));
+    }
+
+    #[test]
+    fn tab_cycles_only_visible_sort_columns_for_layout() {
+        let mut app = app_with_processes();
+
+        app.set_layout_mode(ui::LayoutMode::Compact);
+        app.sort_col = SortColumn::Port;
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::App);
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::Port);
+
+        app.set_layout_mode(ui::LayoutMode::Standard);
+        app.sort_col = SortColumn::Port;
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::App);
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::Pid);
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::Cpu);
+        assert!(!handle_key(&mut app, key(KeyCode::Tab)));
+        assert_eq!(app.sort_col, SortColumn::Port);
+    }
+
+    #[test]
+    fn layout_change_resets_hidden_sort_column_to_visible_default() {
+        let mut app = app_with_processes();
+        app.sort_col = SortColumn::Mem;
+        app.rebuild_cache();
+
+        app.set_layout_mode(ui::LayoutMode::Compact);
+        assert_eq!(app.sort_col, SortColumn::Port);
+        assert_eq!(app.sort_dir, app::SortDir::Asc);
+    }
+
+    #[test]
+    fn ctrl_c_and_confirm_cancel_work() {
+        let mut app = app_with_processes();
+        app.state = AppState::Confirm(app.processes[0].clone());
+
+        assert!(!handle_key(&mut app, key(KeyCode::Esc)));
+        assert!(matches!(app.state, AppState::Normal));
+
+        app.state = AppState::ConfirmMulti(vec![app.processes[0].clone(), app.processes[1].clone()]);
+        assert!(!handle_key(&mut app, key(KeyCode::Char('n'))));
+        assert!(matches!(app.state, AppState::Normal));
+
+        assert!(handle_key(&mut app, ctrl_c()));
+    }
 }

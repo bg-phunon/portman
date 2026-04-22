@@ -37,6 +37,8 @@ portman --json           # One-shot JSON output of all listening ports
 portman --json 3000      # JSON output filtered to port 3000
 ```
 
+`--json` now includes process provenance fields such as scope, risk, inferred type, project root, executable path, cwd, parent process, and guidance.
+
 ## Keybindings
 
 ### Navigation
@@ -80,13 +82,24 @@ portman --json 3000      # JSON output filtered to port 3000
 | Key | Action |
 |---|---|
 | `r` | Refresh process list |
+| `Enter` / `i` | Open full inspect view |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl+C` | Quit |
+
+## What portman shows now
+
+- Exposure scope: localhost, LAN/private network, or public
+- Risk hint: low, medium, or high based on exposure and ownership heuristics
+- Recommended action: keep, inspect, or close-if-unused
+- Process identity: inferred runtime/service type such as Go, Node, Python, Docker, Redis, PostgreSQL
+- Provenance: binary path, working directory, parent process, detected project root, and relation to the current workspace
+- Guidance: a short recommendation to help decide whether a listener is expected or suspicious
 
 ## How it works
 
 - Uses `lsof -iTCP -sTCP:LISTEN -n -P` to discover listening TCP ports
 - Uses `sysinfo` crate for CPU, memory, and process metadata
+- Infers app/runtime type and project origin from executable path, cwd, parent process, and nearby project markers
 - Auto-refreshes every 5 seconds
 - Falls back to cached data if `lsof` fails
 

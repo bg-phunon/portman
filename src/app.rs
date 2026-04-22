@@ -3,9 +3,10 @@ use std::collections::BTreeSet;
 use std::process::Command;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::process::{ProcessInfo, ProcessScanner};
+use crate::ui::LayoutMode;
 
 // ---------------------------------------------------------------------------
 // Sort
@@ -24,21 +25,6 @@ pub enum SortColumn {
 }
 
 impl SortColumn {
-    pub const ALL: [SortColumn; 8] = [
-        SortColumn::Proto,
-        SortColumn::Port,
-        SortColumn::Addr,
-        SortColumn::Pid,
-        SortColumn::User,
-        SortColumn::App,
-        SortColumn::Cpu,
-        SortColumn::Mem,
-    ];
-
-    pub fn index(self) -> usize {
-        Self::ALL.iter().position(|&c| c == self).unwrap_or(0)
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             SortColumn::Proto => "PROTO",
@@ -94,6 +80,7 @@ pub enum AppState {
     Normal,
     FilterInput,
     Help,
+    Inspect(ProcessInfo),
     Confirm(ProcessInfo),
     ConfirmMulti(Vec<ProcessInfo>),
 }
@@ -110,6 +97,7 @@ pub struct App {
     pub last_message: Option<(String, Instant)>,
     pub last_refresh: Instant,
     pub page_size: usize,
+    pub layout_mode: LayoutMode,
     scanner: ProcessScanner,
     // Cached filtered+sorted view — rebuilt once per frame via rebuild_cache()
     filtered_cache: Vec<ProcessInfo>,
@@ -129,6 +117,7 @@ impl App {
             last_message: None,
             last_refresh: Instant::now(),
             page_size: 20,
+            layout_mode: LayoutMode::Standard,
             scanner,
             filtered_cache: Vec::new(),
         }
@@ -144,14 +133,7 @@ impl App {
             let q = self.filter.to_lowercase();
             self.processes
                 .iter()
-                .filter(|p| {
-                    p.app.to_lowercase().contains(&q)
-                        || p.port.to_string().contains(&q)
-                        || p.username.to_lowercase().contains(&q)
-                        || p.command.to_lowercase().contains(&q)
-                        || p.local_addr.contains(&q)
-                        || p.proto.to_lowercase().contains(&q)
-                })
+                .filter(|p| p.matches_filter_lower(&q))
                 .cloned()
                 .collect()
         };
@@ -256,6 +238,12 @@ impl App {
         }
     }
 
+    pub fn request_inspect(&mut self) {
+        if let Some(info) = self.selected_process().cloned() {
+            self.state = AppState::Inspect(info);
+        }
+    }
+
     pub fn kill_confirmed_single(&mut self) -> Result<()> {
         if let AppState::Confirm(ref info) = self.state {
             let pid = info.pid;
@@ -348,9 +336,13 @@ impl App {
     // ----- Sort (rebuild cache on change) -----
 
     pub fn cycle_sort(&mut self) {
-        let idx = self.sort_col.index();
-        let next = (idx + 1) % SortColumn::ALL.len();
-        self.sort_col = SortColumn::ALL[next];
+        let visible = Self::visible_sort_columns(self.layout_mode);
+        let next_col = if let Some(idx) = visible.iter().position(|&col| col == self.sort_col) {
+            visible[(idx + 1) % visible.len()]
+        } else {
+            visible[0]
+        };
+        self.sort_col = next_col;
         self.sort_dir = SortDir::Asc;
         self.selected = 0;
         self.rebuild_cache();
@@ -371,6 +363,16 @@ impl App {
         self.sort_dir = self.sort_dir.toggle();
         self.selected = 0;
         self.rebuild_cache();
+    }
+
+    pub fn set_layout_mode(&mut self, layout_mode: LayoutMode) {
+        self.layout_mode = layout_mode;
+        if !Self::visible_sort_columns(layout_mode).contains(&self.sort_col) {
+            self.sort_col = Self::default_sort_column(layout_mode);
+            self.sort_dir = SortDir::Asc;
+            self.selected = 0;
+            self.rebuild_cache();
+        }
     }
 
     // ----- Filter (rebuild cache on change) -----
@@ -398,10 +400,12 @@ impl App {
     pub fn copy_port(&mut self) {
         if let Some(info) = self.selected_process() {
             let text = info.port.to_string();
-            if clipboard_copy(&text) {
-                self.set_message(format!("Copied port: {text}"));
-            } else {
-                self.set_message("Clipboard failed (pbcopy not found?)".to_string());
+            match clipboard_copy(&text) {
+                Ok(()) => {
+                    self.last_error = None;
+                    self.set_message(format!("Copied port: {text}"));
+                }
+                Err(err) => self.last_error = Some(err.to_string()),
             }
         }
     }
@@ -410,8 +414,12 @@ impl App {
         if self.marked.is_empty() {
             if let Some(info) = self.selected_process() {
                 let text = format!("kill -9 {}", info.pid);
-                if clipboard_copy(&text) {
-                    self.set_message(format!("Copied: {text}"));
+                match clipboard_copy(&text) {
+                    Ok(()) => {
+                        self.last_error = None;
+                        self.set_message(format!("Copied: {text}"));
+                    }
+                    Err(err) => self.last_error = Some(err.to_string()),
                 }
             }
         } else {
@@ -425,8 +433,12 @@ impl App {
             pids.dedup();
             let pid_strs: Vec<String> = pids.iter().map(|p| p.to_string()).collect();
             let text = format!("kill -9 {}", pid_strs.join(" "));
-            if clipboard_copy(&text) {
-                self.set_message(format!("Copied: {text}"));
+            match clipboard_copy(&text) {
+                Ok(()) => {
+                    self.last_error = None;
+                    self.set_message(format!("Copied: {text}"));
+                }
+                Err(err) => self.last_error = Some(err.to_string()),
             }
         }
     }
@@ -455,20 +467,49 @@ impl App {
             self.selected = len - 1;
         }
     }
+
+    fn visible_sort_columns(layout_mode: LayoutMode) -> &'static [SortColumn] {
+        match layout_mode {
+            LayoutMode::Compact => &[SortColumn::Port, SortColumn::App],
+            LayoutMode::Standard => &[
+                SortColumn::Port,
+                SortColumn::App,
+                SortColumn::Pid,
+                SortColumn::Cpu,
+            ],
+            LayoutMode::Wide => &[
+                SortColumn::Proto,
+                SortColumn::Port,
+                SortColumn::App,
+                SortColumn::Pid,
+                SortColumn::Mem,
+            ],
+        }
+    }
+
+    fn default_sort_column(layout_mode: LayoutMode) -> SortColumn {
+        Self::visible_sort_columns(layout_mode)[0]
+    }
 }
 
-fn clipboard_copy(text: &str) -> bool {
+fn clipboard_copy(text: &str) -> Result<()> {
     use std::io::Write;
     let child = Command::new("pbcopy")
         .stdin(std::process::Stdio::piped())
-        .spawn();
-    match child {
-        Ok(mut c) => {
-            if let Some(ref mut stdin) = c.stdin {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            c.wait().is_ok()
-        }
-        Err(_) => false,
+        .spawn()
+        .context("failed to start pbcopy")?;
+
+    let mut child = child;
+    if let Some(ref mut stdin) = child.stdin {
+        stdin
+            .write_all(text.as_bytes())
+            .context("failed to write to pbcopy stdin")?;
+    }
+
+    let status = child.wait().context("failed to wait for pbcopy")?;
+    if status.success() {
+        Ok(())
+    } else {
+        anyhow::bail!("pbcopy exited with status {status}")
     }
 }
