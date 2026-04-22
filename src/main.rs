@@ -1,8 +1,10 @@
 mod app;
 mod process;
 mod ui;
+mod update;
 
 use std::io;
+use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -16,6 +18,7 @@ use ratatui::Terminal;
 
 use app::{App, AppState, SortColumn};
 use process::ProcessScanner;
+use update::{spawn_update_check, UpdateNotice};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const POLL_TIMEOUT: Duration = Duration::from_millis(250);
@@ -91,12 +94,13 @@ fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(scanner);
+    let update_rx = spawn_update_check(env!("CARGO_PKG_VERSION"));
     if let Some(f) = cli.filter {
         app.filter = f;
     }
     app.refresh();
 
-    let result = run_loop(&mut terminal, &mut app);
+    let result = run_loop(&mut terminal, &mut app, update_rx);
 
     disable_raw_mode()?;
     io::stdout().execute(LeaveAlternateScreen)?;
@@ -123,8 +127,14 @@ fn run_json(scanner: &mut ProcessScanner, filter: Option<&str>) -> Result<()> {
 // Event loop
 // ---------------------------------------------------------------------------
 
-fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
+fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    update_rx: Option<Receiver<UpdateNotice>>,
+) -> Result<()> {
     loop {
+        poll_update(app, update_rx.as_ref());
+
         // Rebuild cache once per frame (not per-widget)
         app.rebuild_cache();
 
@@ -148,6 +158,16 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
     }
     Ok(())
+}
+
+fn poll_update(app: &mut App, update_rx: Option<&Receiver<UpdateNotice>>) {
+    let Some(update_rx) = update_rx else {
+        return;
+    };
+
+    if let Ok(notice) = update_rx.try_recv() {
+        app.set_update_notice(notice);
+    }
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) -> bool {
@@ -219,6 +239,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             // Misc
             KeyCode::Char('r') => app.refresh(),
             KeyCode::Char('i') | KeyCode::Enter => app.request_inspect(),
+            KeyCode::Char('u') => app.dismiss_update_notice(),
             KeyCode::Char('?') => {
                 app.state = AppState::Help;
             }
@@ -461,5 +482,17 @@ mod tests {
         assert!(matches!(app.state, AppState::Normal));
 
         assert!(handle_key(&mut app, ctrl_c()));
+    }
+
+    #[test]
+    fn dismiss_update_notice_key_works() {
+        let mut app = app_with_processes();
+        app.set_update_notice(UpdateNotice {
+            message: "Update available".to_string(),
+        });
+
+        assert!(app.update_notice.is_some());
+        assert!(!handle_key(&mut app, key(KeyCode::Char('u'))));
+        assert!(app.update_notice.is_none());
     }
 }

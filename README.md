@@ -100,8 +100,15 @@ portman --json 3000      # JSON output filtered to port 3000
 - Uses `lsof -iTCP -sTCP:LISTEN -n -P` to discover listening TCP ports
 - Uses `sysinfo` crate for CPU, memory, and process metadata
 - Infers app/runtime type and project origin from executable path, cwd, parent process, and nearby project markers
+- Checks GitHub releases in the background and shows an in-app upgrade notice when a newer version is available
 - Auto-refreshes every 5 seconds
 - Falls back to cached data if `lsof` fails
+
+## Update Notice
+
+- When a newer release is available, portman shows a footer notice with the recommended Homebrew upgrade command
+- Press `u` to dismiss the notice for the current session
+- Set `PORTMAN_NO_UPDATE_CHECK=1` to disable background update checks entirely
 
 ## Platform
 

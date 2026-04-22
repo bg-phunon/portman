@@ -137,6 +137,11 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect, layout_mode: LayoutMo
             format!(" {msg} "),
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         )
+    } else if let Some(msg) = app.update_message() {
+        Span::styled(
+            format!(" {msg} "),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        )
     } else if let Some(ref err) = app.last_error {
         Span::styled(
             format!(" ERR: {} ", text::truncate_chars(err, 30)),
@@ -147,9 +152,12 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect, layout_mode: LayoutMo
     };
 
     let help = if layout_mode.shows_side_panel() {
-        Span::styled(" ? help ", Style::default().fg(Color::DarkGray))
+        Span::styled(" u dismiss  ? help ", Style::default().fg(Color::DarkGray))
     } else {
-        Span::styled(" Enter inspect  ? help ", Style::default().fg(Color::DarkGray))
+        Span::styled(
+            " Enter inspect  u dismiss  ? help ",
+            Style::default().fg(Color::DarkGray),
+        )
     };
 
     let line = Line::from(vec![

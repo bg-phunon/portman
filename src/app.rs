@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 
 use crate::process::{ProcessInfo, ProcessScanner};
 use crate::ui::LayoutMode;
+use crate::update::UpdateNotice;
 
 // ---------------------------------------------------------------------------
 // Sort
@@ -95,6 +96,7 @@ pub struct App {
     pub marked: BTreeSet<MarkKey>,
     pub last_error: Option<String>,
     pub last_message: Option<(String, Instant)>,
+    pub update_notice: Option<UpdateNotice>,
     pub last_refresh: Instant,
     pub page_size: usize,
     pub layout_mode: LayoutMode,
@@ -115,6 +117,7 @@ impl App {
             marked: BTreeSet::new(),
             last_error: None,
             last_message: None,
+            update_notice: None,
             last_refresh: Instant::now(),
             page_size: 20,
             layout_mode: LayoutMode::Standard,
@@ -449,6 +452,14 @@ impl App {
         self.last_message = Some((msg, Instant::now()));
     }
 
+    pub fn set_update_notice(&mut self, notice: UpdateNotice) {
+        self.update_notice = Some(notice);
+    }
+
+    pub fn dismiss_update_notice(&mut self) {
+        self.update_notice = None;
+    }
+
     pub fn active_message(&self) -> Option<&str> {
         self.last_message.as_ref().and_then(|(msg, t)| {
             if t.elapsed().as_secs() < 3 {
@@ -457,6 +468,10 @@ impl App {
                 None
             }
         })
+    }
+
+    pub fn update_message(&self) -> Option<&str> {
+        self.update_notice.as_ref().map(|notice| notice.message.as_str())
     }
 
     fn clamp_selection(&mut self) {

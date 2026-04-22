@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [0.2.1] - 2026-04-22
+
+### Added
+- Added a background release check that shows an in-app upgrade notice in TUI mode when a newer version is available.
+- Added an update-check cache and semantic-version comparison tests.
+- Added `u` to dismiss the update notice for the current session.
+
+### Changed
+- Bumped crate version from `0.2.0` to `0.2.1`.
+- Updated the footer, help text, and README to document the update notice flow and `PORTMAN_NO_UPDATE_CHECK=1`.
+
+### Verified
+- `cargo test`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+
 ## [0.2.0] - 2026-04-22
 
 ### Added

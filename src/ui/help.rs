@@ -44,6 +44,7 @@ pub fn render_help(frame: &mut Frame) {
         Line::from(Span::styled("── General ──", dim)),
         Line::from(vec![Span::styled("  r           ", key), Span::raw("Refresh")]),
         Line::from(vec![Span::styled("  Enter / i   ", key), Span::raw("Open full inspect view")]),
+        Line::from(vec![Span::styled("  u           ", key), Span::raw("Dismiss update notice")]),
         Line::from(vec![Span::styled("  ?           ", key), Span::raw("Toggle this help")]),
         Line::from(vec![Span::styled("  q / Ctrl+C  ", key), Span::raw("Quit")]),
         Line::from(""),
