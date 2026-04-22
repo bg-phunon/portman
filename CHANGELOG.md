@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [0.2.2] - 2026-04-22
+
+### Fixed
+- Updated the in-app update checker to detect newer GitHub tags as well as GitHub releases, so freshly pushed tags surface update notices immediately.
+
+### Changed
+- Bumped crate version from `0.2.1` to `0.2.2`.
+- Updated README wording to reflect tag-or-release based update checks.
+
+### Verified
+- `cargo test`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+
 ## [0.2.1] - 2026-04-22
 
 ### Added
