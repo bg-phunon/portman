@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [0.2.3] - 2026-07-12
+
+### Fixed
+- Footer now adapts to terminal width: low-priority segments (layout, refresh, sort) are dropped and the status message is truncated instead of clipping the help hints off-screen.
+- Confirm kill dialogs (single and multi) now size to their content, so process details and the `[Y]/[N]` keys are always visible on short or wide terminals.
+- The `u dismiss` footer hint only appears while an update notice is active.
+
+### Added
+- Help overlay is scrollable with `j`/`k`/arrow keys/PgUp/PgDn, with a scroll hint pinned to its border.
+- Homebrew upgrade command listed in the help overlay.
+
+### Changed
+- Update notice shortened to `Update available: X.Y.Z`; the full upgrade command moved to the help overlay.
+- Bumped crate version from `0.2.2` to `0.2.3`.
+
+### Verified
+- `cargo test`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+
 ## [0.2.2] - 2026-04-22
 
 ### Fixed

@@ -106,7 +106,7 @@ portman --json 3000      # JSON output filtered to port 3000
 
 ## Update Notice
 
-- When a newer tag or release is available, portman shows a footer notice with the recommended Homebrew upgrade command
+- When a newer tag or release is available, portman shows a footer notice; the Homebrew upgrade command is listed in the in-app help (`?`)
 - Press `u` to dismiss the notice for the current session
 - Set `PORTMAN_NO_UPDATE_CHECK=1` to disable background update checks entirely
 
