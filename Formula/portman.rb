@@ -1,8 +1,8 @@
 class Portman < Formula
   desc "TUI tool for monitoring and managing processes listening on TCP ports"
   homepage "https://github.com/bg-phunon/portman"
-  url "https://github.com/bg-phunon/portman/archive/refs/tags/v0.2.2.tar.gz"
-  sha256 "636dedd9b90b3fd3012e77efe99704f2c2cf82b213a2d33533f6f53acc5b13bc"
+  url "https://github.com/bg-phunon/portman/archive/refs/tags/v0.2.3.tar.gz"
+  sha256 "b47079a4e46ac4d4c1a397475565cee4e1f003468f576bc930a5e0ea4a9b86eb"
   license "MIT"
   head "https://github.com/bg-phunon/portman.git", branch: "main"
 
