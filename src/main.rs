@@ -181,6 +181,18 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             KeyCode::Char('?') | KeyCode::Esc | KeyCode::Char('q') => {
                 app.state = AppState::Normal;
             }
+            KeyCode::Char('j') | KeyCode::Down => {
+                app.help_scroll = app.help_scroll.saturating_add(1).min(ui::help_max_scroll());
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.help_scroll = app.help_scroll.saturating_sub(1);
+            }
+            KeyCode::PageDown => {
+                app.help_scroll = app.help_scroll.saturating_add(10).min(ui::help_max_scroll());
+            }
+            KeyCode::PageUp => {
+                app.help_scroll = app.help_scroll.saturating_sub(10);
+            }
             _ => {}
         },
 
@@ -241,6 +253,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             KeyCode::Char('i') | KeyCode::Enter => app.request_inspect(),
             KeyCode::Char('u') => app.dismiss_update_notice(),
             KeyCode::Char('?') => {
+                app.help_scroll = 0;
                 app.state = AppState::Help;
             }
 
@@ -248,11 +261,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             KeyCode::Char('/') => {
                 app.state = AppState::FilterInput;
             }
-            KeyCode::Esc => {
-                if !app.filter.is_empty() {
-                    app.clear_filter();
-                }
-            }
+            KeyCode::Esc if !app.filter.is_empty() => app.clear_filter(),
 
             // Sort
             KeyCode::Tab => app.cycle_sort(),
@@ -482,6 +491,38 @@ mod tests {
         assert!(matches!(app.state, AppState::Normal));
 
         assert!(handle_key(&mut app, ctrl_c()));
+    }
+
+    #[test]
+    fn help_scroll_keys_adjust_offset_and_reset_on_reopen() {
+        let mut app = app_with_processes();
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('?'))));
+        assert!(matches!(app.state, AppState::Help));
+        assert_eq!(app.help_scroll, 0);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('j'))));
+        assert_eq!(app.help_scroll, 1);
+        assert!(!handle_key(&mut app, key(KeyCode::Down)));
+        assert_eq!(app.help_scroll, 2);
+
+        assert!(!handle_key(&mut app, key(KeyCode::Char('k'))));
+        assert_eq!(app.help_scroll, 1);
+        assert!(!handle_key(&mut app, key(KeyCode::Up)));
+        assert_eq!(app.help_scroll, 0);
+        assert!(!handle_key(&mut app, key(KeyCode::Char('k'))));
+        assert_eq!(app.help_scroll, 0, "scroll must saturate at 0");
+
+        // scrolling down is clamped so the box never goes fully blank
+        for _ in 0..500 {
+            handle_key(&mut app, key(KeyCode::Char('j')));
+        }
+        assert_eq!(app.help_scroll, ui::help_max_scroll());
+
+        assert!(!handle_key(&mut app, key(KeyCode::Esc)));
+        assert!(matches!(app.state, AppState::Normal));
+        assert!(!handle_key(&mut app, key(KeyCode::Char('?'))));
+        assert_eq!(app.help_scroll, 0, "reopening help must reset scroll");
     }
 
     #[test]

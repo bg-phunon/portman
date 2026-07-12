@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 const CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24);
 const RELEASES_URL: &str = "https://api.github.com/repos/bg-phunon/portman/releases/latest";
 const TAGS_URL: &str = "https://api.github.com/repos/bg-phunon/portman/tags?per_page=20";
-const UPGRADE_COMMAND: &str = "brew update && brew upgrade bg-phunon/tap/portman";
+pub const UPGRADE_COMMAND: &str = "brew update && brew upgrade bg-phunon/tap/portman";
 
 #[derive(Debug)]
 pub struct UpdateNotice {
@@ -45,9 +45,7 @@ pub fn spawn_update_check(current_version: &'static str) -> Option<Receiver<Upda
         if let Some(latest_version) = latest_version() {
             if is_newer_version(&latest_version, &current_version) {
                 let notice = UpdateNotice {
-                    message: format!(
-                        "Update available: {latest_version}  Run: {UPGRADE_COMMAND}"
-                    ),
+                    message: notice_message(&latest_version),
                 };
                 let _ = tx.send(notice);
             }
@@ -55,6 +53,10 @@ pub fn spawn_update_check(current_version: &'static str) -> Option<Receiver<Upda
     });
 
     Some(rx)
+}
+
+fn notice_message(latest_version: &str) -> String {
+    format!("Update available: {latest_version}")
 }
 
 fn latest_version() -> Option<String> {
@@ -222,6 +224,11 @@ mod tests {
 
     fn some(value: &str) -> Option<String> {
         Some(value.to_string())
+    }
+
+    #[test]
+    fn notice_message_is_short_without_upgrade_command() {
+        assert_eq!(super::notice_message("0.9.9"), "Update available: 0.9.9");
     }
 
     #[test]

@@ -100,6 +100,7 @@ pub struct App {
     pub last_refresh: Instant,
     pub page_size: usize,
     pub layout_mode: LayoutMode,
+    pub help_scroll: u16,
     scanner: ProcessScanner,
     // Cached filtered+sorted view — rebuilt once per frame via rebuild_cache()
     filtered_cache: Vec<ProcessInfo>,
@@ -121,6 +122,7 @@ impl App {
             last_refresh: Instant::now(),
             page_size: 20,
             layout_mode: LayoutMode::Standard,
+            help_scroll: 0,
             scanner,
             filtered_cache: Vec::new(),
         }
